@@ -1,5 +1,6 @@
 import socket
 import threading
+import time
 
 
 class Client:
@@ -15,6 +16,7 @@ class Client:
     #this function returns first listening port, if returns -1 then there is none
     def __getListetnigPort(self, address):
         #print("__getListetnigPort")
+        test_socket = None
         for port in range(40000, 60001):
             try:
                 test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -28,6 +30,7 @@ class Client:
 
     #function in a thread that listens a new message from the server
     def __listen(self):
+        self.socket.setblocking(False)
         while self._isListening:
             #print("Listening...")
             try:
@@ -37,6 +40,9 @@ class Client:
                 # elif data == "Who are you":
                 #     continue
                 print(data.decode("utf-8"))
+            except BlockingIOError:
+                time.sleep(0.1)
+                continue
             except OSError:
                 pass
 
@@ -48,15 +54,24 @@ class Client:
             raise RuntimeError("There is no listening port!")
 
         #section where users enters it's name
-        line = str()
-        nameNotEtered = True
-        data = self.socket.recv(1024)
-        data = data.decode("utf-8")
-        while nameNotEtered:
-            print(data)
-            line = input("#> ")
-            if len(line) != 0:
-                nameNotEtered = False
+        try:
+            line = str()
+            nameNotEtered = True
+            data = self.socket.recv(1024)
+            data = data.decode("utf-8")
+            while nameNotEtered:
+                print(data)
+                line = input("#> ")
+                if len(line) != 0:
+                    nameNotEtered = False
+        except BrokenPipeError:
+            print("Server is down.")
+            self.socket.close()
+            return
+        except KeyboardInterrupt:
+            print("Connection interrupted!")
+            self.socket.close()
+            return
 
         self.socket.send(line.encode())
 
@@ -81,7 +96,7 @@ class Client:
                 self.socket.close()
                 thread.join()
             except BrokenPipeError:
-                print(f"Connection with server is broken. {chr(10)}Waiting for quit...")
+                print(f"Connection with server is broken. {chr(10)}Shutting down...")
                 self._isListening = False
                 isRunning = False
                 self.socket.close()
@@ -89,5 +104,8 @@ class Client:
 
 
 if __name__ == "__main__":
-    client = Client("127.0.0.1")
-    client.start()
+    try:
+        client = Client("127.0.0.1")
+        client.start()
+    except Exception as e:
+        print(e)

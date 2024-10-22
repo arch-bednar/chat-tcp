@@ -1,11 +1,13 @@
 import threading
 import socket
+import time
 import user
 class Server:
     def __init__(self, HOST="127.0.0.1"):
         self.client_list = []
         self.HOST = HOST
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.stop_event = threading.Event()
 
     ##binds socket to port
     def bindTo(self):
@@ -39,7 +41,7 @@ class Server:
         return list.encode()
 
     def sendToAll(self, data, id):
-        print("sendToAll")
+        #print("sendToAll")
         fromUser = self._getClientInfo(id) + ": "
         for client in self.client_list:
             if client.id == id:
@@ -60,17 +62,26 @@ class Server:
             if client.id == id:
                 self.client_list.remove(client)
 
-    def handleClient(self, conn, addr):
+    def handleClient(self, conn, addr, stop_event):
         with conn:
+            conn.setblocking(False)
             conn.send(b"Who are you?")
             data = bytes
-            data = conn.recv(1024)
-            data = data.decode("utf-8")
-            self.addNewClient(conn, data)
-            #conn.sendall(b"")
-            self.sendToAll(f"User {self._getClientInfo(conn.fileno())} is online now", conn.fileno())
+            data_received = False
+            while not data_received and not stop_event.is_set():
+                try:
+                    data = conn.recv(1024)
+                    if data:
+                        data = data.decode("utf-8")
+                        self.addNewClient(conn, data)
+                        #conn.sendall(b"")
+                        self.sendToAll(f"User {self._getClientInfo(conn.fileno())} is online now", conn.fileno())
+                        data_received = True
+                except BlockingIOError:
+                    time.sleep(0.1)
+                    continue
             handlingClient = True
-            while handlingClient:
+            while handlingClient and not stop_event.is_set():
                 try:
                     data = conn.recv(1024)
                     data = data.decode("utf-8")
@@ -99,6 +110,9 @@ class Server:
                     self._removeClient(conn.fileno())
                 except KeyboardInterrupt:
                     self.sendToAll(f"Server is down...", -1)
+                except BlockingIOError:
+                    time.sleep(0.1)
+                    continue
                 except Exception as e:
                     print(e)
 
@@ -124,20 +138,32 @@ class Server:
     def start(self):
         self.bindTo()
         self.socket.listen()
-        client_thread = None
+        client_threads = []
         isRunning = True
-        while isRunning:
-            try:
-                conn, addr = self.socket.accept()
-                print(f"New client connected! {conn.fileno()}")
-                client_thread = threading.Thread(target=self.handleClient, args=(conn, addr))
-                client_thread.start()
-            except KeyboardInterrupt:
-                isRunning = False
-                client_thread.join(1000)
-
+        try:
+            while isRunning:
+                try:
+                    conn, addr = self.socket.accept()
+                    print(f"{self._getClientInfo(conn.fileno())} joins chat group! From " + addr[0])
+                    client_thread = threading.Thread(target=self.handleClient, args=(conn, addr, self.stop_event))
+                    client_thread.start()
+                    client_threads.append(client_thread)
+                except KeyboardInterrupt:
+                    isRunning = False
+                    self.stop_event.set()
+        except Exception as e:
+            print(e)
+            self.socket.close()
+            for client in self.client_list:
+                client.socket.close()
+            for thread in client_threads:
+                thread.join()
+            print("Server shut down due to error.")
 
 
 if __name__ == "__main__":
-    server = Server("127.0.0.1")
-    server.start()
+    try:
+        server = Server("127.0.0.1")
+        server.start()
+    except Exception as e:
+        print(e)
