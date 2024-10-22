@@ -3,62 +3,91 @@ import threading
 
 
 class Client:
+
+    #init new client
     def __init__(self, HOST="127.0.0.1"):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        #self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.HOST = HOST
         self.name = ""
         self.id = 0
+        self._isListening = True
 
-    def __getListetnigPort(self, socket, address):
-        print("__getListetnigPort")
+    #this function returns first listening port, if returns -1 then there is none
+    def __getListetnigPort(self, address):
+        #print("__getListetnigPort")
         for port in range(40000, 60001):
             try:
-                socket.connect((address, port))
+                test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                test_socket.connect((address, port))
+                self.socket = test_socket
                 return port
             except OSError:
+                test_socket.close()
                 continue
         return -1
 
+    #function in a thread that listens a new message from the server
     def __listen(self):
-        while True:
-            print("Listening...")
-            data = self.socket.recv(1024)
-            if not data:
-                continue
-            print(data)
+        while self._isListening:
+            #print("Listening...")
+            try:
+                data = self.socket.recv(1024)
+                if not data:
+                    continue
+                # elif data == "Who are you":
+                #     continue
+                print(data.decode("utf-8"))
+            except OSError:
+                pass
 
-    def main(self):
-        print("main")
-        lst_port = self.__getListetnigPort(self.socket, self.HOST)
+    def start(self):
+        lst_port = self.__getListetnigPort(self.HOST)
 
+        #if -1 then there is not listetning port
         if lst_port == -1:
             raise RuntimeError("There is no listening port!")
 
+        #section where users enters it's name
+        line = str()
+        nameNotEtered = True
         data = self.socket.recv(1024)
-        print(data)
+        data = data.decode("utf-8")
+        while nameNotEtered:
+            print(data)
+            line = input("#> ")
+            if len(line) != 0:
+                nameNotEtered = False
 
-        line = input("> ")
-        self.socket.sendall(line.encode())
+        self.socket.send(line.encode())
 
-        threading.Thread(target=self.__listen).start()
-        print("petla")
-        while True:
-            line = input("> ")
-            if len(line) == 0:
-                continue
-            self.socket.sendall(line.encode())
-            #data = self.socket.recv(1024)
-            # if data == "#?whoareyou?#":
-            #     name=input("Enter your name: ")
-            #     name = name + f"<ID: {str(self.s.fileno())}"
-            #     self.s.send(name.encode())
-            # elif data.startswith("#?PVTFROM?#"):
-            #     pass
-            # else:
-            #     print(data)
-            #print(data)
+        #thread is listening a new message from a server
+        thread = threading.Thread(target=self.__listen)
+        thread.start()
+
+        isRunning = True
+
+        while isRunning:
+            try:
+                line = input("> ")
+                if len(line) == 0:
+                    continue
+                elif line == "QUIT":
+                    raise KeyboardInterrupt
+                self.socket.sendall(line.encode())
+            except KeyboardInterrupt:
+                self._isListening = False
+                isRunning = False
+                self.socket.send(b"QUIT")
+                self.socket.close()
+                thread.join()
+            except BrokenPipeError:
+                print(f"Connection with server is broken. {chr(10)}Waiting for quit...")
+                self._isListening = False
+                isRunning = False
+                self.socket.close()
+                thread.join()
 
 
 if __name__ == "__main__":
     client = Client("127.0.0.1")
-    client.main()
+    client.start()

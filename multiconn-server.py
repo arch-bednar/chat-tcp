@@ -1,6 +1,6 @@
 import threading
 import socket
-import User
+import user
 class Server:
     def __init__(self, HOST="127.0.0.1"):
         self.client_list = []
@@ -12,77 +12,95 @@ class Server:
         free_port = self.get_free_port(self.socket, self.HOST)
         if free_port == -1:
             raise RuntimeError("Failure to bind socket to free port! No free port available!")
+        print(f"Server bound to port: {free_port}")
 
-    def sendToOneClient(self, id):
+    def _sendToOneClient(self, id, text):
         for client in self.client_list:
-            if client.id == id:
-                return id
-        return -1
+            print("client id:" + str(client.id) + " " + str(id))
+            if str(client.id) == id:
+                client.socket.send(text.encode())
+                return None
+        return "There is no such a host"
 
     def cutUserId(self, data):
-        index = data.find("#!SENDTO#")
-        seq = data[len("#!SENDTO#"):]
-        if not seq.startswith("<"):
-            raise Exception("Command #!SENDTO# has be occurred with '<user_id>'")
-        close_bracket_index = seq.find(">")
-        if close_bracket_index == -1:
-            raise Exception("There is no close bracket '>' at command")
-        id = seq[1:close_bracket_index]
-        return id
+        index = data.find("MESG ")
+        seq = data[len("MESG "):]
+        seq.split(" ")
+        return seq[0]
 
     def returnListOfUsers(self):
         list=str()
         counter=0
         for client in self.client_list:
-            list += client.name + "<"+client.id+">"+chr(10)
-            counter+=1
+            list += client.name + "<"+str(client.id)+">"+chr(10)
+            counter += 1
 
         list = f"Total {counter} online."+chr(10)+list
         return list.encode()
 
     def sendToAll(self, data, id):
         print("sendToAll")
+        fromUser = self._getClientInfo(id) + ": "
         for client in self.client_list:
-            if client.fileno() == id:
-                print("sameClient")
+            if client.id == id:
+                #print("sameClient")
                 continue
             else:
-                print("send to other client")
-                client.send(data)
+                #print("send to other client")
+                client.socket.send((fromUser + data).encode())
+
+    def _getClientInfo(self, id):
+        for user in self.client_list:
+            if user.id == id:
+                return str(user)
+        return "No a such user"
+
+    def _removeClient(self, id):
+        for client in self.client_list:
+            if client.id == id:
+                self.client_list.remove(client)
 
     def handleClient(self, conn, addr):
         with conn:
-            conn.send(b"#?whoareyou?#")
+            conn.send(b"Who are you?")
             data = bytes
             data = conn.recv(1024)
-            conn.sendall(b"")
-            while True:
+            data = data.decode("utf-8")
+            self.addNewClient(conn, data)
+            #conn.sendall(b"")
+            self.sendToAll(f"User {self._getClientInfo(conn.fileno())} is online now", conn.fileno())
+            handlingClient = True
+            while handlingClient:
                 try:
                     data = conn.recv(1024)
-                    if not data: #connection broken
+                    data = data.decode("utf-8")
+                    if not data: #connection is broken
                         break
-                    # elif data == "#?LIST?#": #listing all users
-                    #     conn.send(self.returnListOfUsers())
-                    # elif data.startswith("#?SENDTO?#"): #sending private message
-                    #     try:
-                    #         id=self.cutUserId(data)
-                    #     except Exception as e:
-                    #         print(e)
-                    #
-                    #     client_id = self.sendToOneClient(id)
-                    #     if client_id == -1: #checks if client exists
-                    #         raise Exception(f"There is no user with id={id}")
-                    #     else:
-                    #         for client in self.client_list:
-                    #             if client.id == client_id:
-                    #                 client.socket.send((f"Whisper<{conn.fileno()}>:"+data[data.find(">"):]).encode())
+                    elif data.startswith("LIST"): #listing all users
+                        conn.send(self.returnListOfUsers())
+                    elif data.startswith("QUIT"):
+                        #conn.sendall(f"User {self._getClientInfo(conn.fileno())} has been disconnected".encode())
+                        self.sendToAll(f"User {self._getClientInfo(conn.fileno())} has been disconnected", conn.fileno())
+                        self._removeClient(conn.fileno())
+                    elif data.startswith("MESG "):
+                        args = data.split(" ")
+                        if len(args) < 3:
+                            conn.send(f"Not enough arguments: required 3, but {len(args)} were given!".encode())
+                        else:
+                            x = self._sendToOneClient(args[1], f"{self._getClientInfo(conn.fileno())} whispers: " + chr(32).join(args[2:]))
+                            if not x is None:
+                                conn.send(x.encode())
                     else: #sends message to all users
-                        #conn.sendall(data)
                         self.sendToAll(data, conn.fileno())
                         print(f"{data}")
                 except ConnectionResetError:
-                    print(f"User {conn.fileno()} disconnected")
-                    continue
+                    self.sendToAll(f"User {conn.fileno()} disconnected", conn.fileno())
+                    handlingClient = False
+                    self._removeClient(conn.fileno())
+                except KeyboardInterrupt:
+                    self.sendToAll(f"Server is down...", -1)
+                except Exception as e:
+                    print(e)
 
     def get_free_port(self, sock, address):
         for i in range(40000, 60001):
@@ -93,36 +111,33 @@ class Server:
                 continue
         return -1
 
-    def addNewClient(self, socket):
-        self.client_list.append(socket)
+    def addNewClient(self, socket, name):
+        newUser = user.user(socket, name)
+        self.client_list.append(newUser)
 
     def checkClientId(self, client_socket):
         for client in self.client_list:
-            if client.id == client_socket.fileno():
+            if client.id == client_socket.id:
                 return 1
         return 0
 
-    def main(self):
+    def start(self):
         self.bindTo()
         self.socket.listen()
-        while True:
-            conn, addr = self.socket.accept()
-            self.addNewClient(conn)
-            print(f"New client connected! {conn.fileno()}")
-            client_thread = threading.Thread(target=self.handleClient, args=(conn, addr))
-            client_thread.start()
+        client_thread = None
+        isRunning = True
+        while isRunning:
+            try:
+                conn, addr = self.socket.accept()
+                print(f"New client connected! {conn.fileno()}")
+                client_thread = threading.Thread(target=self.handleClient, args=(conn, addr))
+                client_thread.start()
+            except KeyboardInterrupt:
+                isRunning = False
+                client_thread.join(1000)
 
 
-# def clientPart(conn, addr):
-#     with conn:
-#         conn.send(b"#?whoareyou?")
-#         data = conn.recv(1024)
-#         while True:
-#             data = conn.recv(1024)
-#             if not data:
-#                 break
-#             print(f"{data}")
 
 if __name__ == "__main__":
     server = Server("127.0.0.1")
-    server.main()
+    server.start()
