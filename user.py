@@ -1,5 +1,5 @@
 class user:
-
+#
     def __init__(self, _socket, _name):
         self._socket = _socket
         self._name = _name
