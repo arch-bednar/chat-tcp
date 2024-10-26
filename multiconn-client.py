@@ -5,7 +5,7 @@ import time
 
 class Client:
 
-    #init new client
+    # init new client
     def __init__(self, HOST="127.0.0.1"):
         #self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.HOST = HOST
@@ -39,7 +39,9 @@ class Client:
                     continue
                 # elif data == "Who are you":
                 #     continue
-                print(data.decode("utf-8"))
+                data = data.decode("utf-8") + ""
+                print(data)
+                #print(">", end=" ")
             except BlockingIOError:
                 time.sleep(0.1)
                 continue
@@ -59,11 +61,19 @@ class Client:
             nameNotEtered = True
             data = self.socket.recv(1024)
             data = data.decode("utf-8")
+            print(data)
             while nameNotEtered:
-                print(data)
+                print("Please enter, your name and id with format: NAME<id>, where id consists of 8 characters (big/small letters and digits).")
                 line = input("#> ")
                 if len(line) != 0:
-                    nameNotEtered = False
+                    self.socket.send(line.encode())
+                    data = self.socket.recv(1024).decode("utf-8")
+                    if data != "OK":
+                        print(data)
+                        continue
+                    else:
+                        print("name and id entered")
+                        nameNotEtered = False
         except BrokenPipeError:
             print("Server is down.")
             self.socket.close()
@@ -73,14 +83,11 @@ class Client:
             self.socket.close()
             return
 
-        self.socket.send(line.encode())
-
         #thread is listening a new message from a server
         thread = threading.Thread(target=self.__listen)
         thread.start()
 
         isRunning = True
-
         while isRunning:
             try:
                 line = input("> ")
